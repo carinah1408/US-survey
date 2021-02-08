@@ -1,0 +1,483 @@
+---
+title: "Exploratory H7_US_survey"
+author: "CH"
+date: "30/12/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(readr) # loading dataset
+library(tidyverse) # data wrangling
+library(dplyr) # data wrangingl
+library(QuantPsyc) # standardizing    
+library(plm) 
+library(lmtest)
+library(pglm) 
+library(pscl)
+library(tidyr)
+library(reshape2) # convert format of dataset
+library(car)
+library(MASS)
+library(InformationValue) 
+library(Epi)
+library(DSUR.noof)
+library(sjmisc)
+
+# loading dataset
+data <- here::here("data/US_data.csv")
+US_data <- readr::read_csv(data) %>%
+  as.data.frame()
+
+# relabeling variables
+US_data <- US_data %>%
+  mutate(vote = case_when(
+  vote=='1' ~ 'Democrats',
+  vote=='2' ~ 'Republicans',
+  TRUE ~ 'Other'))
+
+US_data <- US_data %>%
+  mutate(unexp = case_when(
+    unexp == "0" ~ "Expected",
+    unexp == "1" ~ "Unexpected",
+    unexp == "2" ~ "Neither expected nor unexpected"))
+
+US_data <- US_data %>%
+  mutate(gend = case_when(
+    gend == "1" ~ "Female",
+    gend == "2" ~ "Male",
+    gend == "3" ~ "Non-binary"
+  ))
+
+US_data <- US_data %>%
+  mutate(ethn = case_when(
+    ethn == "1" ~ "Asian-American",
+    ethn == "2" ~ "Black or African American",
+    ethn == "3" ~ "Hispanic or Latino American",
+    ethn == "4" ~ "Native American",
+    ethn == "5" ~ "White or European American",
+    ethn == "6" ~ "Other"
+  ))
+
+US_data <- US_data %>%
+  mutate(degree =case_when(
+    degree == "1" ~ "No degree",
+    degree == "2" ~ "High School",
+    degree == "3" ~ "Bachelor´s degree",
+    degree == "4" ~ "Master´s degree",
+    degree == "5" ~ "Doctoral degree",
+    degree == "6" ~ "Professional degree",
+    degree == "7" ~ "Other"
+  ))
+
+US_data <- US_data %>%
+  mutate(employ = case_when(
+    employ == "1" ~ "Working - paid employee",
+    employ == "2" ~ "Working - self-employed",
+    employ == "3" ~ "Not working - temporary layoff from a job",
+    employ == "4" ~ "Not working - looking for a job",
+    employ == "5" ~ "Not working - retired",
+    employ == "6" ~ "Not working - disabled",
+    employ == "7" ~ "Not working - student",
+    employ == "8" ~ "Other"
+  ))
+
+US_data <- US_data %>%
+  mutate(income = case_when(
+    income == "1" ~ "$0 - $10,000",
+    income == "2" ~ "$10,000 - $20,000",
+    income == "3" ~ "$20,000 - $30,000",
+    income == "4" ~ "$30,000 - $40,000",
+    income == "5" ~ "$40,000 - $50,000",
+    income == "6" ~ "over $50,000"
+  ))
+
+# create new variables
+US <- US_data %>%
+  mutate(cn = (cn_1 + cn_2 + cn_3 + cn_4 + cn_5)/5,
+        secident = (secident_1 + secident_2 + secident_3 + secident_4 + secident_5 +
+        secident_6 + secident_7 + secident_8 + secident_9 + secident_10)/10,
+        ingroup_satis = (secident_4 + secident_5 + secident_6 + secident_7)/4,
+        xeno = (xeno_1 + xeno_2 + xeno_3 + xeno_4)/4, 
+        joy = (joy_1 + joy_2)/2,
+        eff = (eff_1 + eff_2)/2) %>%
+  as.data.frame()
+US
+
+# transform factor variables
+US$id <- as.factor(US$id)
+US$time <- as.factor(US$time)
+
+# subset data
+US_t1_mod <- subset(US, time == "1" & vote == "Republicans" & unexp == "Unexpected")
+US_t2_mod <- subset(US, time == "2" & vote == "Republicans" & unexp == "Unexpected")
+
+US_t1_mod$id <- as.factor(US_t1_mod$id)
+US_t1_mod$time <- as.factor(US_t1_mod$time)
+US_t1_mod$vote <- as.factor(US_t1_mod$vote)
+
+US_t2_mod$id <- as.factor(US_t2_mod$id)
+US_t2_mod$time <- as.factor(US_t2_mod$time)
+US_t2_mod$vote <- as.factor(US_t2_mod$vote)
+
+US_t2 <- subset(US, time =="2")
+US_t2
+
+# transform from long to wide dataset
+US_wide <- reshape(US, direction = "wide", idvar = "id", timevar = "time")
+US_wide_Rep <- subset(US_wide, vote.1 == "Republicans" & vote.2 == "Republicans")
+US_wide_unexp_Rep <- subset(US_wide_Rep, unexp.1 == "Unexpected" & unexp.2 == "Unexpected")
+
+# standardize variables which are on different scales (than 1 to 7)
+US_wide$sd.2 = scale(US_wide$sd.2)
+US_wide$fc_1_o_agr.1 = scale(US_wide$fc_1_o_agr.1)
+US_wide$fc_1_o_agr.2 = scale(US_wide$fc_1_o_agr.2)
+US_wide$fc_2_o_agr.1 = scale(US_wide$fc_2_o_agr.1)
+US_wide$fc_2_o_agr.2 = scale(US_wide$fc_2_o_agr.2)
+US_wide$cor_health.2 = scale(US_wide$cor_health.2)
+US_wide$cor_values.2 = scale(US_wide$cor_values.2)
+US_wide$donate.2 = scale(US_wide$donate.2)
+
+# subset for rmANOVA
+US_Rep <- subset(US, vote == "Republicans")
+
+# standardize variables in dataset that use a different scale than 1 to 7
+
+US_Rep$fc_1_o_agr = scale(US_Rep$fc_1_o_agr)
+US_Rep$fc_2_o_agr = scale(US_Rep$fc_2_o_agr)
+US_Rep$cor_health = scale(US_Rep$cor_health)
+US_Rep$cor_values = scale(US_Rep$cor_values)
+```
+
+## Exploratory
+
+# Collective narcissism  
+```{r}
+# descriptives by vote
+descriptives3 <- US %>% 
+  group_by(vote) %>%
+  dplyr::select(., cn, secident, ingroup_satis, xeno, joy, eff, pi_1_own, pi_1_ave, pi_2_own, pi_2_ave, fc_1_s, fc_1_o_agr, fc_2_s, fc_2_o_agr) %>%
+  summarise(., mean_cn = mean(cn), sd_cn = sd(cn), 
+            mean_secident = mean(secident), sd_secident = sd(secident),
+            mean_ingroup_satis = mean(ingroup_satis), sd_ingroup_satis = sd(ingroup_satis), 
+            mean_xeno = mean(xeno), sd_xeno = sd(xeno),
+            mean_joy = mean(joy), sd_joy = sd(joy),
+            mean_eff = mean(eff), sd_eff = sd(eff),
+            mean_pi_1_own = mean(pi_1_own), sd_pi_1_own = sd(pi_1_own),
+            mean_pi_1_ave = mean(pi_1_ave), sd_pi_1_ave = sd(pi_1_ave),
+            mean_pi_2_own = mean(pi_2_own), sd_pi_2_own = sd(pi_2_own),
+            mean_pi_2_ave = mean(pi_2_ave), sd_pi_2_ave = sd(pi_2_ave),
+            mean_fc_1_s = mean(fc_1_s), sd_fc_1_s = sd(fc_1_s),
+            mean_fc_1_o_agr = mean(fc_1_o_agr), sd_fc_1_o_agr = sd(fc_1_o_agr),
+            mean_fc_2_s = mean(fc_2_s), sd_fc_2_s = sd(fc_2_s),
+            mean_fc_2_o_agr = mean(fc_2_o_agr), sd_fc_2_o_agr = sd(fc_2_o_agr))
+descriptives3
+
+# descriptives by vote and time
+descriptives4 <- US %>% 
+  group_by(vote, time) %>%
+  summarise(., mean_cn = mean(cn), sd_cn = sd(cn), 
+            mean_secident = mean(secident), sd_secident = sd(secident), 
+            mean_xeno = mean(xeno), sd_xeno = sd(xeno),
+            mean_joy = mean(joy), sd_joy = sd(joy),
+            mean_eff = mean(eff), sd_eff = sd(eff),
+            mean_pi_1_own = mean(pi_1_own), sd_pi_1_own = sd(pi_1_own),
+            mean_pi_1_ave = mean(pi_1_ave), sd_pi_1_ave = sd(pi_1_ave),
+            mean_pi_2_own = mean(pi_2_own), sd_pi_2_own = sd(pi_2_own),
+            mean_pi_2_ave = mean(pi_2_ave), sd_pi_2_ave = sd(pi_2_ave),
+            mean_fc_1_s = mean(fc_1_s), sd_fc_1_s = sd(fc_1_s),
+            mean_fc_1_o_agr = mean(fc_1_o_agr), sd_fc_1_o_agr = sd(fc_1_o_agr),
+            mean_fc_2_s = mean(fc_2_s), sd_fc_2_s = sd(fc_2_s),
+            mean_fc_2_o_agr = mean(fc_2_o_agr), sd_fc_2_o_agr = sd(fc_2_o_agr))
+descriptives4
+
+# without outliers fc_1_s 
+descriptives5 <- US_t1_clean %>% 
+  group_by(vote, time) %>%
+  summarise(., mean_fc_1_s = mean(fc_1_s), sd_fc_1_s = sd(fc_1_s))
+descriptives5
+
+# without outliers fc_1_o_agr
+descriptives6 <- US_t1_clean2 %>% 
+  group_by(vote, time) %>%
+  summarise(., mean_fc_1_o_agr = mean(fc_1_o_agr), sd_fc_1_o_agr = sd(fc_1_o_agr))
+descriptives6
+
+
+
+# rmANOVA (influence of time and vote on cn)
+anova_cn <- aov(cn ~ time + vote + Error(id/time), data = US)
+summary(anova_cn)
+rcontrast(62.37, 1)
+
+# not working because of unequal group size between Democrats and Republicans
+stats::pairwise.t.test(US$cn, US$vote, paired = TRUE, p.adjust.method = "bonferroni")
+
+# t-test cn by vote (grand mean)
+cn.t.test <- t.test(cn ~ vote, data = US)
+cn.t.test
+
+# effect size
+
+t<-cn.t.test$statistic[[1]]
+df<-cn.t.test$parameter[[1]]
+r <- sqrt(t^2/(t^2+df))
+round(r, 3)
+
+# plot in paper
+ggplot(US_t2, aes(x=cn, fill=vote))+
+  geom_histogram(aes(y=..density..),binwidth=1, alpha=.5, position="identity") +
+  labs(x= "Collective narcissism", y= "Frequency") +
+  scale_fill_manual(name = "Vote", 
+      labels = c("Democratic Party", "Republican Party", NA), 
+      values = c("#58a6a6", "#efa355", NA)) +
+  theme_light()
+```
+
+# Collective narcissism on FC and behavioural intention
+```{r}
+# fc_1_o_agr & fc_2_o_agr
+
+# rmANOVA
+US_fc_1_o_agr_clean <- subset(US, vote == "Republicans", id =! "160")
+
+fc_1.rm <- aov(fc_1_o_agr ~ time + cn + secident + Error(id/time), data = US_Rep)
+summary(fc_1.rm)
+eta_sq(fc_1.rm)
+
+#without outlier in fc_1_o_agr (no difference in results)
+fc_1.rm_clean <- aov(fc_1_o_agr ~ time + cn + secident + Error(id/time), data = US_fc_1_o_agr_clean)
+summary(fc_1.rm_clean)
+eta_sq(fc_1.rm_clean)
+
+fc_2.rm <- aov(fc_2_o_agr ~ time + cn + secident + cor_health + Error(id/time), data = US_Rep)
+summary(fc_2.rm)
+eta_sq(fc_2.rm)
+
+# --> see script "MLM_US_survey.Rmd" for alternative approach using MLM
+
+# behavioural intention
+
+# rmANOVA
+sign.rm <- aov(sign ~ time + cn + secident + Error(id/time), data = US_Rep)
+summary(sign.rm)
+eta_sq(sign.rm)
+
+# --> see script "MLM_US_survey.Rmd" for alternative approach using MLM
+```
+
+
+# ### ADDITIONAL CALCULATIONS
+
+# Further anaylsis: CN on joy & eff
+```{r}
+joy_cn.mod <- lm(joy.2 ~ cn.2, data = US_wide_Rep)
+summary(joy_cn.mod)
+confint(joy_cn.mod)
+plot(joy_cn.mod)
+ncvTest(joy_cn.mod)# homoscedasticity assumption not violated
+
+joy_cn.mod2 <- lm(joy.2 ~ cn.2 + secident.2, data = US_wide_Rep)
+summary(joy_cn.mod2)
+confint(joy_cn.mod2)
+plot(joy_cn.mod2)
+ncvTest(joy_cn.mod2) # homoscedasticity assumption not violated
+
+joy_cn.mod3 <- lm(joy.2 ~ cn.2 + secident.2 + cor_values.2, data = US_wide_Rep)
+summary(joy_cn.mod3)
+confint(joy_cn.mod3)
+plot(joy_cn.mod3)
+ncvTest(joy_cn.mod3) # homoscedasticity assumption not violated
+
+bootResults11 <- Boot(joy_cn.mod3, R = 10000)
+summary(bootResults11)
+boot.ci(bootResults11, type = "bca", index = 2)
+boot.ci(bootResults11, type = "bca", index = 3)
+boot.ci(bootResults11, type = "bca", index = 4)
+
+eff_cn.mod <- lm(eff.2 ~ cn.2, data = US_wide_Rep)
+summary(eff_cn.mod)
+plot(eff_cn.mod)
+     
+bootReg <- function(formula, data, indices)
+  {
+    d <- data [i,]
+    fit <- lm(formula, data = d)
+    return(coef(fit))
+  }
+
+bootResults <- Boot(eff_cn.mod, R = 10000)
+summary(bootResults)
+boot.ci(bootResults, type = "bca", index = 2)
+
+eff_cn.mod2 <- lm(eff.2 ~ cn.2 + secident.2, data = US_wide_Rep)
+summary(eff_cn.mod2)
+plot(eff_cn.mod2)
+
+eff_cn.mod3 <- lm(eff.2 ~ cn.2 + secident.2 + cor_health.2, data = US_wide_Rep)
+summary(eff_cn.mod3)
+confint(eff_cn.mod3)
+plot(eff_cn.mod3)
+
+bootResults <- Boot(eff_cn.mod3, R = 10000)
+summary(bootResults)
+boot.ci(bootResults, type = "bca", index = 2)
+boot.ci(bootResults, type = "bca", index = 3)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+# ALTERNATIVE AND OLD CALCULATIONS: fc_o_agr
+
+# multiple regression
+
+# fc_1_o_agr
+fc_1_cn.mod <- lm(fc_1_o_agr.2 ~ cn.2, data = US_wide_Rep) # N = 52
+summary(fc_1_cn.mod)
+plot(fc_1_cn.mod)
+ncvTest(fc_1_cn.mod)# homoscedasticity assumption not violated
+
+# without outliers
+US_wide_Rep_clean1 <- US_wide_Rep %>%
+  filter(., id!= "p180" & id!= "p122" & id!= "p148")
+
+fc_1_cn.mod_clean <- lm(fc_1_o_agr.2 ~ cn.2, data = US_wide_Rep_clean1) # N = 49
+summary(fc_1_cn.mod_clean)
+plot(fc_1_cn.mod_clean)
+
+# adding secident and fc_1_o_agr.1 (with outliers removed)
+fc_1_cn.mod2 <- lm(fc_1_o_agr.2 ~ cn.2 + secident.2 + fc_1_o_agr.1, data = US_wide_Rep)
+summary(fc_1_cn.mod2)
+plot(fc_1_cn.mod2)
+confint(fc_1_cn.mod2)
+ncvTest(fc_1_cn.mod2) # homoscedasticity assumption not violated
+vif(fc_1_cn.mod2)
+
+# without outlier removal
+fc_1_cn.mod2a <- lm(fc_1_o_agr.2 ~ cn.2 + secident.2 + fc_1_o_agr.1, data = US_wide_Rep)
+summary(fc_1_cn.mod2a)
+confint(fc_1_cn.mod2a)
+
+bootResults0 <- Boot(fc_1_cn.mod2, R = 10000)
+summary(bootResults0)
+boot.ci(bootResults0, type = "bca", index = 2)
+boot.ci(bootResults0, type = "bca", index = 3)
+boot.ci(bootResults0, type = "bca", index = 4)
+
+# fc_2_o_agr
+fc_2_cn.mod <- lm(fc_2_o_agr.2 ~ cn.2, data = US_wide_Rep) # N = 52
+summary(fc_2_cn.mod)
+plot(fc_2_cn.mod)
+
+# without outlier
+US_wide_Rep_clean2 <- US_wide_Rep %>%
+  filter(., id != "p122")
+
+fc_2_cn.mod_clean <- lm(fc_2_o_agr.2 ~ cn.2, data = US_wide_Rep_clean2) # N = 51
+summary(fc_2_cn.mod_clean)
+
+# adding secident, fc_2_o_agr t1 and cor_health
+fc_2_cn.mod2 <- lm(fc_2_o_agr.2 ~ cn.2 + secident.2 + fc_2_o_agr.1 + cor_health.2, data = US_wide_Rep) # N = 51
+summary(fc_2_cn.mod2)
+confint(fc_2_cn.mod2)
+plot(fc_2_cn.mod2) # issues with linearity 
+
+# --> bootstrap 
+bootReg <- function(formula, data, indices)
+  {
+    d <- data [i,]
+    fit <- lm(formula, data = d)
+    return(coef(fit))
+  }
+
+bootResults <- Boot(fc_2_cn.mod2, R = 10000)
+summary(bootResults)
+boot.ci(bootResults, type = "bca", index = 2)
+boot.ci(bootResults, type = "bca", index = 3)
+boot.ci(bootResults, type = "bca", index = 4)
+boot.ci(bootResults, type = "bca", index = 5)
+
+# If more than one predictor: boot.ci(bootResults, type = "bca", index = 1) intercept; 
+# boot.ci(bootResults, type "bca", index = 2) first predictor; boot.ci(bootResults, 
+# type = "bca", index = 3) second predictor etc
+
+# Note that the confidence interval isn’t symmetrical because our data isn’t 
+# perfectly normal. Thus, when you report them make sure to note that they are 
+# 95% bootstrap bca confidence intervals. Also note that the quantiles reported 
+# in the output are linear quantiles
+
+# https://ademos.people.uic.edu/Chapter12.html#5_what_can_we_do_to_remedy_this
+
+# OLD AND ALTERNATIVE CALCULATIONS: sign
+# Multiple regression
+
+
+sign_cn.mod <- glm(sign.2 ~ cn.2, data = US_wide_Rep, family = "binomial")
+summary(sign_cn.mod)
+exp(coef(sign_cn.mod))
+exp(confint(sign_cn.mod))
+pscl::pR2(sign_cn.mod) ["McFadden"]
+
+# adding secident and sign.1 
+sign_cn.mod2 <- glm(sign.2 ~ cn.2 + secident.2 + sign.1, data = US_wide_Rep, family = "binomial")
+summary(sign_cn.mod2)
+exp(coef(sign_cn.mod2))
+exp(confint(sign_cn.mod2))
+pscl::pR2(sign_cn.mod2) ["McFadden"] # values > .40 mean that the model fits the data very well)
+car::vif(sign_cn.mod2) 
+
+bootResults <- Boot(sign_cn.mod2, R = 10000)
+summary(bootResults)
+boot.ci(bootResults, type = "bca", index = 2)
+boot.ci(bootResults, type = "bca", index = 3)
+boot.ci(bootResults, type = "bca", index = 4)
+
+
+# predictions based on cn-values
+sign_cn_pred <- data.frame(cn.2 = 4, secident.2 = 6, sign.1 = 0)
+predict(sign_cn.mod2, sign_cn_pred, type = "response")
+
+# predictions for each individual in dataset
+
+predicted <- predict(sign_cn.mod2, US_wide_Rep, type = "response")
+predicted
+
+# model diagnostics
+optimal <- optimalCutoff(US_wide_Rep$sign.2, predicted) [1] 
+optimal 
+
+# sensitivity and specificity
+sensitivity(US_wide_Rep$sign.2, predicted)
+specificity(US_wide_Rep$sign.2, predicted)
+
+# total miscalculation error rate
+misClassError(US_wide_Rep$sign.2, predicted, threshold = optimal) 
+
+# ROC curve
+plotROC(US_wide_Rep$sign.2, predicted) 
+```
+
+
+
+
+
+
+
+
+
+
+

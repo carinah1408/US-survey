@@ -1,0 +1,279 @@
+---
+title: "MLM_US_Survey"
+author: "CH"
+date: "06/01/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(here) # loading dataset
+library(readr)# loading dataset
+library(tidyverse)# data wrangling
+library(dplyr) # data wrangling
+library(lme4) # for MLM
+library(nlme) # for MLM
+library(lmerTest) 
+library(sjstats)
+library(oddsratio)
+library(dfoptim)
+library(optimx)
+library(devtools)
+install_github('mjwestgate/sppairs')
+library(sppairs)
+library(grid)
+library(ggplot2)
+
+# loading dataset ####
+data <- here::here("data/US_data.csv")
+
+US_data <- readr::read_csv(data) %>%
+  as_tibble() 
+
+# transform factor variables
+
+US_data$time <- factor(US_data$time)
+US_data$unexp <- factor(US_data$unexp)
+US_data$vote <- factor(US_data$vote)
+
+# relabel variables
+US_data <- US_data %>%
+  mutate(vote = case_when(
+  vote=='1' ~ 'Democrats',
+  vote=='2' ~ 'Republicans',
+  TRUE ~ 'Other'))
+
+US_data <- US_data %>%
+  mutate(unexp = case_when(
+    unexp == "0" ~ "Expected",
+    unexp == "1" ~ "Unexpected",
+    unexp == "2" ~ "Neither expected nor unexpected"))
+
+US_data <- US_data %>%
+  mutate(gend = case_when(
+    gend == "1" ~ "Female",
+    gend == "2" ~ "Male",
+    gend == "3" ~ "Non-binary"
+  ))
+
+US_data <- US_data %>%
+  mutate(ethn = case_when(
+    ethn == "1" ~ "Asian-American",
+    ethn == "2" ~ "Black or African American",
+    ethn == "3" ~ "Hispanic or Latino American",
+    ethn == "4" ~ "Native American",
+    ethn == "5" ~ "White or European American",
+    ethn == "6" ~ "Other"
+  ))
+
+US_data <- US_data %>%
+  mutate(degree =case_when(
+    degree == "1" ~ "No degree",
+    degree == "2" ~ "High School",
+    degree == "3" ~ "Bachelor´s degree",
+    degree == "4" ~ "Master´s degree",
+    degree == "5" ~ "Doctoral degree",
+    degree == "6" ~ "Professional degree",
+    degree == "7" ~ "Other"
+  ))
+
+US_data <- US_data %>%
+  mutate(employ = case_when(
+    employ == "1" ~ "Working - paid employee",
+    employ == "2" ~ "Working - self-employed",
+    employ == "3" ~ "Not working - temporary layoff from a job",
+    employ == "4" ~ "Not working - looking for a job",
+    employ == "5" ~ "Not working - retired",
+    employ == "6" ~ "Not working - disabled",
+    employ == "7" ~ "Not working - student",
+    employ == "8" ~ "Other"
+  ))
+
+US_data <- US_data %>%
+  mutate(income = case_when(
+    income == "1" ~ "$0 - $10,000",
+    income == "2" ~ "$10,000 - $20,000",
+    income == "3" ~ "$20,000 - $30,000",
+    income == "4" ~ "$30,000 - $40,000",
+    income == "5" ~ "$40,000 - $50,000",
+    income == "6" ~ "over $50,000"
+  ))
+
+# creating new variables
+US <- US_data %>%
+  mutate(cn = (cn_1 + cn_2 + cn_3 + cn_4 + cn_5)/5,
+        secident = (secident_1 + secident_2 + secident_3 + secident_4 + secident_5 +
+        secident_6 + secident_7 + secident_8 + secident_9 + secident_10)/10,
+        ingroup_satis = (secident_4 + secident_5 + secident_6 + secident_7)/4,
+        xeno = (xeno_1 + xeno_2 + xeno_3 + xeno_4)/4, 
+        joy = (joy_1 + joy_2)/2,
+        eff = (eff_1 + eff_2)/2) %>%
+  as.tibble()
+US
+
+# transform factor variables new dataset
+US$time <- factor(US$time)
+US$unexp <- factor(US$unexp)
+US$vote <- factor(US$vote)
+
+
+
+# credits go to Jenny Terry for providing advice and code (https://github.com/jenny-terry)
+
+# select variables for MLM analyses and filter Republicans
+US_mlm <- US %>%
+  dplyr::select(., id, time, vote, unexp, cn, secident, sd, joy, eff, fc_1_o_agr, fc_2_o_agr, cor_values, cor_health, sign, donate, share) %>%
+  dplyr::filter(., vote == "Republicans")
+head(US_mlm)
+
+# convert character variable to factors
+
+US_mlm$id <- factor(US_mlm$id)
+
+# standardize variables which are on different scales (than 1 to 7)
+US_mlm$sd = scale(US_mlm$sd)
+US_mlm$fc_1_o_agr = scale(US_mlm$fc_1_o_agr)
+US_mlm$fc_2_o_agr = scale(US_mlm$fc_2_o_agr)
+US_mlm$cor_health = scale(US_mlm$cor_health)
+US_mlm$cor_values = scale(US_mlm$cor_values)
+US_mlm$donate = scale(US_mlm$donate)
+
+# mlm is chosen to account for (repeated measures within-participant) dependency: the scores measured are nested within the individual with makes the individual (id) = level 2, and the values level 1 --> we need to center by id ("group" center)
+
+# group mean center level 1 predictors (note: fc_1_o_agr, fc_2_o_agr, joy and eff are also DVs and will be added in their non-centered form when used as a DV)
+
+US_mlm <- US_mlm %>%
+  dplyr::group_by(id) %>%
+  dplyr::mutate(gmc_cn = mean(cn), gmc_secident = mean(secident), gmc_joy = mean(joy), gmc_eff = mean(eff))
+
+# factor categorical variable
+US_mlm$time <- factor(US_mlm$time)
+
+# selection optimizer
+allFit(show.meth.tab = TRUE)
+```
+
+# cn --> fc_1_o_agr
+```{r}
+# MLM approach: nested effect (as alternative to rmANOVA)
+
+# outlier in fc_1_o_agr "p160" not listed in dataset US_mlm
+
+fc_1_o_agr.mod0 <- lme(fc_1_o_agr  ~ time + gmc_secident + gmc_cn, random =  ~ 1|id/time, US_mlm, method = "ML")
+summary(fc_1_o_agr.mod0)
+nlme::intervals(fc_1_o_agr.mod0, which = "fixed")
+
+# plot
+plot_fc_1_o_agr_time <- theme(panel.margin=unit(0,"lines"))
+ggplot(US_mlm,aes(time,fc_1_o_agr))+
+  geom_point()+
+  geom_line(aes(group=id))+
+plot_fc_1_o_agr_time
+```
+
+# cn --> fc_2_o_agr
+```{r}
+# MLM approach: nested effect (as alternative to rmANOVA)
+fc_2_o_agr.mod0 <- lme(fc_2_o_agr  ~ time + gmc_secident + gmc_cn, random =  ~ 1|id/time, US_mlm, method = "ML")
+summary(fc_2_o_agr.mod0)
+nlme::intervals(fc_2_o_agr.mod0, which = "fixed")
+
+# plot
+plot_fc_2_o_agr_time <- theme(panel.margin=unit(0,"lines"))
+ggplot(US_mlm,aes(time,fc_2_o_agr))+
+  geom_point()+
+  geom_line(aes(group=id))+
+plot_fc_2_o_agr_time
+```
+
+# cn --> signing
+```{r}
+# MLM approach: nested effects (as alternative to rmANOVA)
+sign.mod01 <- glmer(sign ~ time + gmc_secident + gmc_cn + (time|id), US_mlm, family = binomial(link="logit"), control = glmerControl(optimizer = "bobyqa"),nAGQ = 0)
+summary(sign.mod01)
+# issues with CI
+lme4::confint.merMod(sign.mod01)
+
+# plot (an attempt)
+plot_sign_time <- theme(panel.margin=unit(0,"lines"))
+ggplot(US_mlm,aes(time,sign))+
+  geom_point()+
+  geom_line(aes(group=id))+
+plot_sign_time
+```
+
+
+
+
+
+
+# Growth model approach (not appropriate since using two time points only)
+```{r}
+# growth models approach: fc_1_o_agr
+
+# unconditional model (grand mean fc_1_o_agr across all individuals and time points)
+cn_fc_1_o_agr.mod <- lmer(fc_1_o_agr ~ 1 + (1|id), data = US_mlm, REML = FALSE)
+summary(cn_fc_1_o_agr.mod)
+lme4::confint.merMod(cn_fc_1_o_agr.mod)
+
+# unconditional growth model (variance across individuals and time)
+cn_fc_1_o_agr.mod2 <- lmer(fc_1_o_agr ~ time + (time|id), data = US_mlm, REML = FALSE, control = lmerControl(check.nobs.vs.nRE = "ignore"))
+summary(cn_fc_1_o_agr.mod2)
+lme4::confint.merMod(cn_fc_1_o_agr.mod2)
+cn_fc_1_o_agr.mod2_all <- allFit(cn_fc_1_o_agr.mod2)
+
+# conditional growth model (inclusion of covariates time & secident and interaction between time and cn as time-variant covariate that could possibly change with time)
+cn_fc_1_o_agr.mod3 <- lmer(fc_1_o_agr ~ time + gmc_secident + time*gmc_cn + (time|id), data = US_mlm, REML = FALSE, control = lmerControl(check.nobs.vs.nRE = "ignore"))
+summary(cn_fc_1_o_agr.mod3)
+lme4::confint.merMod(cn_fc_1_o_agr.mod3)
+
+anova(cn_fc_1_o_agr.mod, cn_fc_1_o_agr.mod2, cn_fc_1_o_agr.mod3)
+
+# growth model approach: fc_2_o_agr
+
+# unconditional model (grand mean fc_1_o_agr across all individuals and time points)
+cn_fc_2_o_agr.mod <- lmer(fc_2_o_agr ~ 1 + (1|id), data = US_mlm, REML = FALSE)
+summary(cn_fc_2_o_agr.mod)
+lme4::confint.merMod(cn_fc_2_o_agr.mod)
+
+# unconditional growth model (variance across individuals and time)
+cn_fc_2_o_agr.mod2 <- lmer(fc_2_o_agr ~ time + (time|id), data = US_mlm, REML = FALSE, control = lmerControl(check.nobs.vs.nRE = "ignore"))
+summary(cn_fc_2_o_agr.mod2)
+lme4::confint.merMod(cn_fc_2_o_agr.mod2)
+
+# conditional growth model (inclusion of TVC (= time-variant covariates) predictors that could possibly change as a function of time)
+cn_fc_2_o_agr.mod3 <- lmer(fc_2_o_agr ~ time + gmc_secident + time*gmc_cn + (time|id), data = US_mlm, REML = FALSE, control = lmerControl(check.nobs.vs.nRE = "ignore"))
+summary(cn_fc_2_o_agr.mod3)
+lme4::confint.merMod(cn_fc_2_o_agr.mod3)
+
+anova(cn_fc_2_o_agr.mod, cn_fc_2_o_agr.mod2, cn_fc_2_o_agr.mod3)
+
+# growth model approach: sign
+
+# unconditional model (logisitc regression)
+sign.mod <- glmer(sign ~ 1 + (1|id), US_mlm, family = "binomial")
+summary(sign.mod)
+cc <- confint(sign.mod,parm="beta_")  
+ctab <- cbind(est=fixef(sign.mod),cc)
+ctab
+sjstats::icc(sign.mod)
+# An ICC of 0.96 means that 96% of the variation in the outcome variable can be accounted for by the clustering structure of the data. This provides evidence that a multilevel model may make a difference to the model estimates, in comparison with a non-multilevel model. Therefore, the use of multilevel models is necessary and warrantied. (adjusted and taken from: https://www.rensvandeschoot.com/tutorials/generalised-linear-models-with-glm-and-lme4/)
+
+# unconditional growth model
+sign.mod2 <- glmer(sign ~ time + (time|id), US_mlm, family = "binomial", control = glmerControl(check.nobs.vs.nRE = "ignore"))
+summary(sign.mod2)
+
+# conditional growth model
+sign.mod3 <- glmer(sign ~ time + gmc_secident + time*gmc_cn + (time|id), US_mlm, family = "binomial", control = glmerControl(check.nobs.vs.nRE = "ignore"), nAGQ = 0)
+summary(sign.mod3)
+
+# problem calculating CI and OR
+lme4::confint.merMod(sign.mod3, devtol = 1e-01)
+or.glmer(US_mlm, cn_sign.mod3, complex)
+or_glm(US_mlm, sign.mod3, incr = list(time = 2))
+cc3 <- confint(sign.mod3,parm="beta_")  
+ctab3 <- cbind(est=fixef(sign.mod3),cc3)
+ctab3
+
+anova(sign.mod, sign.mod2, sign.mod3)
+```
